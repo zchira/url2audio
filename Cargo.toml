@@ -1,0 +1,28 @@
+[package]
+name = "url2audio"
+version = "0.1.6"
+authors = ["zchira"]
+license = "GPL-3.0"
+description = "simple-to-use lib for playing audio streams"
+homepage = "https://github.com/zchira/url2audio"
+repository = "https://github.com/zchira/url2audio"
+readme = "README.md"
+keywords = ["audio", "streams", "symphonia", "player"]
+categories = ["multimedia::audio"]
+edition = "2021"
+
+[lib]
+
+[dependencies]
+crossbeam-channel = "0.5.13"
+libpulse-binding = "2.28.1"
+libpulse-simple-binding = "2.28.1"
+symphonia = { version = "0.5.4", features = ["all", "opt-simd"] }
+ureq = "2.9.7"
+
+[profile.bench]
+debug = true
+
+[target.x86_64-unknown-linux-gnu]
+linker = "/usr/bin/clang"
+rustflags = ["-Clink-arg=-fuse-ld=lld", "-Clink-arg=-Wl,--no-rosegment"]
