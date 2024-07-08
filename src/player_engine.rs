@@ -1,7 +1,7 @@
 use crossbeam_channel::{Receiver, Sender};
-use symphonia::core::units::TimeBase;
 use std::thread::sleep;
 use symphonia::core::codecs::{Decoder, CODEC_TYPE_NULL};
+use symphonia::core::units::TimeBase;
 use symphonia::core::{
     audio::SignalSpec,
     codecs::DecoderOptions,
@@ -13,8 +13,9 @@ use symphonia::core::{
     units::{Duration, Time},
 };
 
+use crate::cpalaudio;
 use crate::{
-    pulseaudio::{self, AudioOutput, PulseAudioOutput},
+    cpalaudio::{AudioOutput, CpalAudioOutput},
     url_source::UrlSource,
 };
 
@@ -24,7 +25,7 @@ pub enum PlayerActions {
     Resume,
     Seek(f64),
     Close,
-    Open(String) // veliki loop za sve (open, play, play track...)
+    Open(String), // veliki loop za sve (open, play, play track...)
 }
 
 #[derive(PartialEq, Clone, Debug)]
@@ -41,7 +42,7 @@ pub struct PlayerEngine {
     // rx_status: Receiver<PlayerStatus>,
     tx_status: Sender<PlayerStatus>,
     src: Option<String>,
-    initiate_drop: bool
+    initiate_drop: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -65,7 +66,7 @@ impl PlayerEngine {
             tx_status,
             // rx_status
             src: None,
-            initiate_drop: false
+            initiate_drop: false,
         }
     }
 
@@ -80,9 +81,7 @@ impl PlayerEngine {
         let decode_opts: DecoderOptions = Default::default();
         let result = loop {
             let action = match self.rx.try_recv() {
-                Ok(a) => {
-                    Some(a)
-                }
+                Ok(a) => Some(a),
                 Err(_e) => None,
             };
 
@@ -101,15 +100,19 @@ impl PlayerEngine {
                             track_id = track.unwrap().id;
 
                             (tb, dur, decoder) = if let Some(r) = self.reader.as_mut() {
-                                let track = match r.tracks().iter().find(|track| track.id == track_id) {
-                                    Some(track) => track,
-                                    _ => return Err(symphonia::core::errors::Error::IoError(
-                                            std::io::Error::new(std::io::ErrorKind::Other, ""),
-                                    )),
-                                };
+                                let track =
+                                    match r.tracks().iter().find(|track| track.id == track_id) {
+                                        Some(track) => track,
+                                        _ => {
+                                            return Err(symphonia::core::errors::Error::IoError(
+                                                std::io::Error::new(std::io::ErrorKind::Other, ""),
+                                            ))
+                                        }
+                                    };
 
                                 // Create a decoder for the track.
-                                let dec = symphonia::default::get_codecs().make(&track.codec_params, &decode_opts)?;
+                                let dec = symphonia::default::get_codecs()
+                                    .make(&track.codec_params, &decode_opts)?;
 
                                 let tb = track.codec_params.time_base;
                                 let dur = track
@@ -119,12 +122,12 @@ impl PlayerEngine {
                                 (tb, dur, Some(dec))
                             } else {
                                 return Err(symphonia::core::errors::Error::IoError(
-                                        std::io::Error::new(std::io::ErrorKind::Other, ""),
+                                    std::io::Error::new(std::io::ErrorKind::Other, ""),
                                 ));
                             };
                         }
                     }
-                    _ => {},
+                    _ => {}
                 }
             }
 
@@ -161,7 +164,8 @@ impl PlayerEngine {
                 }
             } else {
                 break Err(symphonia::core::errors::Error::IoError(
-                        std::io::Error::new(std::io::ErrorKind::Other, "")));
+                    std::io::Error::new(std::io::ErrorKind::Other, ""),
+                ));
             };
 
             if packet.track_id() != track_id {
@@ -298,8 +302,8 @@ fn ignore_end_of_stream_error(result: Result<()>) -> Result<()> {
     }
 }
 
-pub fn try_open(spec: SignalSpec, duration: Duration) -> pulseaudio::Result<Box<dyn AudioOutput>> {
-    PulseAudioOutput::try_open(spec, duration)
+pub fn try_open(spec: SignalSpec, duration: Duration) -> cpalaudio::Result<Box<dyn AudioOutput>> {
+    CpalAudioOutput::try_open(spec, duration)
 }
 
 fn update_progress(
