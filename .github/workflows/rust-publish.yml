@@ -1,0 +1,22 @@
+name: Rust-publish
+
+on:
+  push:
+    tags:
+      - '*'
+  workflow_dispatch:
+  
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  publish:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+    - name: Build
+      run: sudo apt-get install libpulse0 && cargo build --verbose
+    - name: publishing
+      run: cargo publish --token ${{secrets.CRATES_TOKEN}}
