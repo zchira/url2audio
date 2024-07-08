@@ -2,11 +2,12 @@ use std::thread::sleep;
 
 use url2audio::Player;
 
-mod url_source;
+mod cpalaudio;
 mod player_engine;
-mod pulseaudio;
+mod resampler;
+mod url_source;
 
-fn main()   {
+fn main() {
     let src = "https://podcast.daskoimladja.com/media/2024-05-27-PONEDELJAK_27.05.2024.mp3";
     // let src = "https://stream.daskoimladja.com:9000/stream";
 
@@ -14,7 +15,6 @@ fn main()   {
     let res = p.open(src);
     // p.play();
     println!("Res: {:#?}", res);
-
 
     println!("duration: {}", p.duration());
     sleep(std::time::Duration::from_secs(10));
@@ -24,7 +24,6 @@ fn main()   {
     sleep(std::time::Duration::from_secs(3));
     p.play();
     println!("Resume at: {}", p.current_position());
-
 
     sleep(std::time::Duration::from_secs(3));
     p.seek(600.0);
@@ -45,4 +44,3 @@ fn main()   {
     sleep(std::time::Duration::from_secs(5));
     println!("end");
 }
-

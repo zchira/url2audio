@@ -1,8 +1,13 @@
-mod url_source;
+mod cpalaudio;
 mod player_engine;
-mod pulseaudio;
+mod resampler;
+mod url_source;
 
-use std::{sync::{Arc, RwLock}, thread::sleep, time::Duration};
+use std::{
+    sync::{Arc, RwLock},
+    thread::sleep,
+    time::Duration,
+};
 
 use crossbeam_channel::{unbounded, Receiver, Sender};
 
@@ -19,17 +24,15 @@ pub struct Player {
 
 impl Player {
     pub fn new() -> Self {
-        let (tx, rx) = unbounded(); 
-        let (tx_status, rx_status) = unbounded(); 
+        let (tx, rx) = unbounded();
+        let (tx_status, rx_status) = unbounded();
         let mut to_ret = Player {
-            inner_player: Arc::new(
-                              RwLock::new(
-                                  PlayerEngine::new(
-                                      tx.clone(),
-                                      rx.clone(),
-                                      tx_status.clone(),
-                                      // rx_status.clone()
-                                      ))),
+            inner_player: Arc::new(RwLock::new(PlayerEngine::new(
+                tx.clone(),
+                rx.clone(),
+                tx_status.clone(),
+                // rx_status.clone()
+            ))),
             tx,
             rx,
             rx_status,
@@ -38,16 +41,14 @@ impl Player {
                 playing: true,
                 duration: 0.0,
                 position: 0.0,
-            }))
+            })),
         };
         to_ret.inner_thread();
         to_ret
-
     }
-    
+
     pub fn open(&mut self, src: &str) {
         let _ = self.tx.send(PlayerActions::Open(src.to_string()));
-
     }
 
     pub fn inner_thread(&mut self) {
@@ -62,30 +63,27 @@ impl Player {
 
         let rx1 = self.rx_status.clone();
         let s = self.state.clone();
-        let _ = std::thread::spawn(move || {
-            loop {
-                let a = rx1.try_recv();
+        let _ = std::thread::spawn(move || loop {
+            let a = rx1.try_recv();
 
-                match a {
-                    Ok(a) => {
-                        let mut state = s.write().unwrap();
-                        match a {
-                            PlayerStatus::SendPlaying(playing) => {
-                                state.playing = playing;
-                            }
-                            PlayerStatus::SendDuration(duration) => {
-                                state.duration = duration;
-                            }
-                            PlayerStatus::SendPosition(position) => {
-                                state.position = position;
-                            }
+            match a {
+                Ok(a) => {
+                    let mut state = s.write().unwrap();
+                    match a {
+                        PlayerStatus::SendPlaying(playing) => {
+                            state.playing = playing;
                         }
-                    },
-                    Err(_) => { 
-                    },
+                        PlayerStatus::SendDuration(duration) => {
+                            state.duration = duration;
+                        }
+                        PlayerStatus::SendPosition(position) => {
+                            state.position = position;
+                        }
+                    }
                 }
-                sleep(Duration::from_millis(50));
+                Err(_) => {}
             }
+            sleep(Duration::from_millis(50));
         });
     }
 
@@ -97,12 +95,11 @@ impl Player {
         let _ = self.tx.send(PlayerActions::Pause);
     }
 
-    pub fn toggle_play(&self) {
-    }
+    pub fn toggle_play(&self) {}
 
     /// seek to time from the beginning.
     /// `time` is in seconds
-    pub fn seek(&self,time: f64) {
+    pub fn seek(&self, time: f64) {
         let _ = self.tx.send(PlayerActions::Seek(time));
     }
 
@@ -110,7 +107,6 @@ impl Player {
     pub fn seek_relative(&self, dt: f64) {
         let new_pos = self.current_position() + dt;
         let _ = self.tx.send(PlayerActions::Seek(new_pos));
-
     }
 
     pub fn current_position(&self) -> f64 {
@@ -120,7 +116,4 @@ impl Player {
     pub fn duration(&self) -> f64 {
         self.state.read().unwrap().duration
     }
-
-    
-
 }
