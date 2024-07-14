@@ -18,24 +18,25 @@ fn main() {
 
     println!("duration: {}", p.duration());
     sleep(std::time::Duration::from_secs(10));
-    println!("Paused at: {}", p.current_position());
+    println!("Paused at: {}  {}", p.current_position_display(), p.current_position());
+    println!("duration: {}", p.duration());
     p.pause();
 
     sleep(std::time::Duration::from_secs(3));
     p.play();
-    println!("Resume at: {}", p.current_position());
+    println!("Resume at: {} {}", p.current_position_display(), p.current_position());
 
     sleep(std::time::Duration::from_secs(3));
     p.seek(600.0);
-    println!("seek 600: {}", p.current_position());
+    println!("seek 600: {} {}", p.current_position_display(), p.current_position());
 
     sleep(std::time::Duration::from_secs(5));
     p.seek(1200.0);
-    println!("seek 1200: {}", p.current_position());
+    println!("seek 1200: {} {}", p.current_position_display(), p.current_position());
 
     sleep(std::time::Duration::from_secs(5));
     p.seek(0.0);
-    println!("seek back 0: {}", p.current_position());
+    println!("seek back 0: {} {}", p.current_position_display(), p.current_position());
 
     sleep(std::time::Duration::from_secs(5));
     let res = p.open(src);

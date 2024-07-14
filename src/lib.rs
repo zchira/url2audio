@@ -73,11 +73,9 @@ impl Player {
                         PlayerStatus::SendPlaying(playing) => {
                             state.playing = playing;
                         }
-                        PlayerStatus::SendDuration(duration) => {
-                            state.duration = duration;
-                        }
-                        PlayerStatus::SendPosition(position) => {
+                        PlayerStatus::SendTimeStats(position, duration) => {
                             state.position = position;
+                            state.duration = duration;
                         }
                     }
                 }
@@ -115,5 +113,16 @@ impl Player {
 
     pub fn duration(&self) -> f64 {
         self.state.read().unwrap().duration
+    }
+
+    pub fn current_position_display(&self) -> String {
+        let seconds = self.current_position();
+        let is: i64 = seconds.round() as i64;
+        let hours = is / (60 * 60);
+        let mins = (is % (60 * 60)) / 60;
+        let secs = seconds - 60.0 * mins as f64 - 60.0 * 60.0 * hours as f64; // is % 60;
+        // format!("\r\u{25b6}\u{fe0f}  {}:{:0>2}:{:0>4.1}", hours, mins, secs)
+        format!("{}:{:0>2}:{:0>4.1}", hours, mins, secs)
+
     }
 }

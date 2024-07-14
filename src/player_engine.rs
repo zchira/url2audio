@@ -31,8 +31,8 @@ pub enum PlayerActions {
 #[derive(PartialEq, Clone, Debug)]
 pub enum PlayerStatus {
     SendPlaying(bool),
-    SendDuration(f64),
-    SendPosition(f64),
+    /// (position, duration)
+    SendTimeStats(f64, f64)
 }
 
 pub struct PlayerEngine {
@@ -115,10 +115,13 @@ impl PlayerEngine {
                                     .make(&track.codec_params, &decode_opts)?;
 
                                 let tb = track.codec_params.time_base;
+
                                 let dur = track
                                     .codec_params
                                     .n_frames
-                                    .map(|frames| track.codec_params.start_ts + frames);
+                                    .map(|frames| {
+                                        track.codec_params.start_ts + frames
+                                    });
                                 (tb, dur, Some(dec))
                             } else {
                                 return Err(symphonia::core::errors::Error::IoError(
@@ -186,8 +189,7 @@ impl PlayerEngine {
                         let ts = packet.ts();
                         let (position, duration) = update_progress(ts, dur, tb);
                         {
-                            let _ = self.tx_status.send(PlayerStatus::SendDuration(duration));
-                            let _ = self.tx_status.send(PlayerStatus::SendPosition(position));
+                            let _ = self.tx_status.send(PlayerStatus::SendTimeStats(position, duration));
                         }
 
                         if let Some(ref mut audio_output) = audio_output {
@@ -237,7 +239,8 @@ impl PlayerEngine {
         let hint = Hint::new();
         let mss = MediaSourceStream::new(source, Default::default());
 
-        let format_opts = FormatOptions {
+        let format_opts = FormatOptions
+        {
             enable_gapless: true,
             ..Default::default()
         };

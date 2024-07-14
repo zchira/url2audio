@@ -1,5 +1,6 @@
 use std::io::{Read, Seek, SeekFrom};
 use symphonia::core::io::MediaSource;
+use std::str::FromStr;
 
 /// Wrapper which impl `Read`, `Seek`, `Send`, `Sync` and `MediaSource`
 /// for reader returned by `ureq` request.
@@ -28,7 +29,21 @@ impl MediaSource for UrlSource {
     }
 
     fn byte_len(&self) -> Option<u64> {
-        None
+        if let Ok(r) = ureq::get(&self.url).call() {
+            let cl = r.header("content-length");
+            match cl {
+                Some(len_str) => {
+                    let len: Result<u64, _> = len_str.to_string().parse();
+                    match len {
+                        Ok(l) => Some(l),
+                        Err(_) => None,
+                    }
+                },
+                None => None,
+            }
+        } else {
+            None
+        }
     }
 }
 
@@ -83,4 +98,13 @@ fn ureq_range2() {
     let mut buf: [u8; 10] = [0; 10];
     let r = r.read_exact(&mut buf);
     println!("r2: {:#?},,, {:#?}", r, buf);
+}
+
+#[test]
+fn ureq_content_length() {
+    let url = "https://podcast.daskoimladja.com/media/2024-05-27-PONEDELJAK_27.05.2024.mp3";
+    let r = ureq::get(url).call().unwrap();
+    let headers = r.headers_names();
+    let cl = r.header("content-length");
+    println!("r3: {:#?},,, {:#?}", headers, cl);
 }
