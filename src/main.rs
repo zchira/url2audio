@@ -16,10 +16,10 @@ fn main() {
     // p.play();
     println!("Res: {:#?}", res);
 
-    println!("duration: {}", p.duration());
+    println!("duration: {}, {}", p.duration(), p.duration_display());
     sleep(std::time::Duration::from_secs(10));
     println!("Paused at: {}  {}", p.current_position_display(), p.current_position());
-    println!("duration: {}", p.duration());
+    println!("duration: {} {}", p.duration(), p.duration_display());
     p.pause();
 
     sleep(std::time::Duration::from_secs(3));

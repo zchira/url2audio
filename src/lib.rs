@@ -116,12 +116,18 @@ impl Player {
     }
 
     pub fn current_position_display(&self) -> String {
-        let seconds = self.current_position();
+        self.time_to_display(self.current_position())
+    }
+
+    pub fn duration_display(&self) -> String {
+        self.time_to_display(self.duration())
+    }
+
+    fn time_to_display(&self, seconds: f64) -> String {
         let is: i64 = seconds.round() as i64;
         let hours = is / (60 * 60);
         let mins = (is % (60 * 60)) / 60;
         let secs = seconds - 60.0 * mins as f64 - 60.0 * 60.0 * hours as f64; // is % 60;
-        // format!("\r\u{25b6}\u{fe0f}  {}:{:0>2}:{:0>4.1}", hours, mins, secs)
         format!("{}:{:0>2}:{:0>4.1}", hours, mins, secs)
 
     }
