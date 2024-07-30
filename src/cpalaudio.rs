@@ -40,7 +40,7 @@ impl CpalAudioOutput {
         let device = match host.default_output_device() {
             Some(device) => device,
             _ => {
-                println!("failed to get default audio output device");
+                // println!("failed to get default audio output device");
                 return Err(AudioOutputError::OpenStreamError);
             }
         };
@@ -48,7 +48,7 @@ impl CpalAudioOutput {
         let config = match device.default_output_config() {
             Ok(config) => config,
             Err(err) => {
-                println!("failed to get default audio output device config: {}", err);
+                // println!("failed to get default audio output device config: {}", err);
                 return Err(AudioOutputError::OpenStreamError);
             }
         };
@@ -118,12 +118,12 @@ impl<T: AudioOutputSample + cpal::SizedSample> CpalAudioOutputImpl<T> {
                 // Mute any remaining samples.
                 data[written..].iter_mut().for_each(|s| *s = T::MID);
             },
-            move |err| println!("audio output error: {}", err),
+            move |_err| {}, // println!("audio output error: {}", err),
             None,
         );
 
-        if let Err(err) = stream_result {
-            println!("audio output stream open error: {}", err);
+        if let Err(_err) = stream_result {
+            // println!("audio output stream open error: {}", err);
 
             return Err(AudioOutputError::OpenStreamError);
         }
@@ -132,7 +132,7 @@ impl<T: AudioOutputSample + cpal::SizedSample> CpalAudioOutputImpl<T> {
 
         // Start the output stream.
         if let Err(err) = stream.play() {
-            println!("audio output stream play error: {}", err);
+            // println!("audio output stream play error: {}", err);
 
             return Err(AudioOutputError::PlayStreamError);
         }
@@ -140,7 +140,7 @@ impl<T: AudioOutputSample + cpal::SizedSample> CpalAudioOutputImpl<T> {
         let sample_buf = SampleBuffer::<T>::new(duration, spec);
 
         let resampler = if spec.rate != config.sample_rate.0 {
-            println!("resampling {} Hz to {} Hz", spec.rate, config.sample_rate.0);
+            // println!("resampling {} Hz to {} Hz", spec.rate, config.sample_rate.0);
             Some(Resampler::new(
                 spec,
                 config.sample_rate.0 as usize,
