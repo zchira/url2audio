@@ -41,6 +41,7 @@ impl Player {
                 playing: true,
                 duration: 0.0,
                 position: 0.0,
+                error: None
             })),
         };
         to_ret.inner_thread();
@@ -76,6 +77,12 @@ impl Player {
                         PlayerStatus::SendTimeStats(position, duration) => {
                             state.position = position;
                             state.duration = duration;
+                        }
+                        PlayerStatus::Error(err) => {
+                            state.error = Some(err);
+                        }
+                        PlayerStatus::ClearError => {
+                            state.error = None
                         }
                     }
                 }
@@ -115,6 +122,14 @@ impl Player {
         self.state.read().unwrap().duration
     }
 
+    pub fn is_in_error_state(&self) -> bool {
+        self.state.read().unwrap().error.is_some()
+    }
+
+    pub fn error(&self) -> Option<String> {
+        self.state.read().unwrap().error.clone()
+    }
+
     pub fn current_position_display(&self) -> String {
         self.time_to_display(self.current_position())
     }
@@ -129,6 +144,5 @@ impl Player {
         let mins = (is % (60 * 60)) / 60;
         let secs = seconds - 60.0 * mins as f64 - 60.0 * 60.0 * hours as f64; // is % 60;
         format!("{}:{:0>2}:{:0>4.1}", hours, mins, secs)
-
     }
 }

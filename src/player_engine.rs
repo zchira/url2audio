@@ -32,7 +32,9 @@ pub enum PlayerActions {
 pub enum PlayerStatus {
     SendPlaying(bool),
     /// (position, duration)
-    SendTimeStats(f64, f64)
+    SendTimeStats(f64, f64),
+    Error(String),
+    ClearError,
 }
 
 pub struct PlayerEngine {
@@ -42,14 +44,14 @@ pub struct PlayerEngine {
     // rx_status: Receiver<PlayerStatus>,
     tx_status: Sender<PlayerStatus>,
     src: Option<String>,
-    initiate_drop: bool,
+    error: Option<String>
 }
 
-#[derive(Clone, Debug)]
 pub struct PlayerState {
     pub playing: bool,
     pub duration: f64,
     pub position: f64,
+    pub error: Option<String>,
 }
 
 impl PlayerEngine {
@@ -66,7 +68,7 @@ impl PlayerEngine {
             tx_status,
             // rx_status
             src: None,
-            initiate_drop: false,
+            error: None
         }
     }
 
@@ -87,8 +89,12 @@ impl PlayerEngine {
 
             if let Some(ref a) = action {
                 match a {
-                    PlayerActions::Close => todo!(),
+                    PlayerActions::Close => break Ok(0), //todo!(),
                     PlayerActions::Open(src) => {
+                        self.error = None;
+                        decoder = None;
+                        audio_output = None;
+                        let _ = self.tx_status.send(PlayerStatus::ClearError);
                         let _res = self.open(&src);
                         let track_num: Option<usize> = None;
 
@@ -101,14 +107,15 @@ impl PlayerEngine {
 
                             (tb, dur, decoder) = if let Some(r) = self.reader.as_mut() {
                                 let track =
-                                    match r.tracks().iter().find(|track| track.id == track_id) {
-                                        Some(track) => track,
-                                        _ => {
-                                            return Err(symphonia::core::errors::Error::IoError(
-                                                std::io::Error::new(std::io::ErrorKind::Other, ""),
-                                            ))
-                                        }
-                                    };
+                                match r.tracks().iter().find(|track| track.id == track_id) {
+                                    Some(track) => track,
+                                    _ => {
+                                        let err = "Error reading track";
+                                        self.error = Some(err.to_string());
+                                        let _ = self.tx_status.send(PlayerStatus::Error(err.to_string()));
+                                        continue;
+                                    }
+                                };
 
                                 // Create a decoder for the track.
                                 let dec = symphonia::default::get_codecs()
@@ -124,15 +131,22 @@ impl PlayerEngine {
                                     });
                                 (tb, dur, Some(dec))
                             } else {
-                                return Err(symphonia::core::errors::Error::IoError(
-                                    std::io::Error::new(std::io::ErrorKind::Other, ""),
-                                ));
+                                    let err = "reader is none";
+                                    self.error = Some(err.to_string());
+                                    let _ = self.tx_status.send(PlayerStatus::Error(err.to_string()));
+                                    continue;
                             };
                         }
                     }
                     _ => {}
                 }
             }
+
+            if self.error.is_some() {
+                sleep(std::time::Duration::from_millis(200));
+                continue;
+            }
+
 
             if self.reader.is_none() {
                 sleep(std::time::Duration::from_millis(200));
@@ -163,12 +177,21 @@ impl PlayerEngine {
             let packet = if let Some(reader) = self.reader.as_mut() {
                 match reader.next_packet() {
                     Ok(packet) => packet,
-                    Err(err) => break Err(err),
+                    Err(err) => {
+                        let err = "Error reading track";
+                        self.error = Some(err.to_string());
+                        let _ = self.tx_status.send(PlayerStatus::Error(err.to_string()));
+                        continue;
+                    },
                 }
             } else {
-                break Err(symphonia::core::errors::Error::IoError(
-                    std::io::Error::new(std::io::ErrorKind::Other, ""),
-                ));
+                let err = "Error reading track";
+                self.error = Some(err.to_string());
+                let _ = self.tx_status.send(PlayerStatus::Error(err.to_string()));
+                continue;
+                // break Err(symphonia::core::errors::Error::IoError(
+                //     std::io::Error::new(std::io::ErrorKind::Other, ""),
+                // ));
             };
 
             if packet.track_id() != track_id {
@@ -216,13 +239,18 @@ impl PlayerEngine {
                             }
                         }
                     }
-
                     Err(Error::DecodeError(err)) => {
                         // Decode errors are not fatal. Print the error message and try to decode the next
                         // packet as usual.
-                        println!("decode error: {}", err);
+                        // println!("decode error: {}", err);
+                        let err = &format!("decode error: {}", err);
+                        self.error = Some(err.to_string());
+                        let _ = self.tx_status.send(PlayerStatus::Error(err.to_string()));
+                        continue;
                     }
-                    Err(err) => break Err(err),
+                    Err(err) => {
+                        continue; // Err(err),
+                    }
                 };
             }
             sleep(std::time::Duration::from_millis(20));
@@ -287,7 +315,6 @@ impl PlayerEngine {
 impl Drop for PlayerEngine {
     fn drop(&mut self) {
         println!("DROP");
-        self.initiate_drop = true;
     }
 }
 
