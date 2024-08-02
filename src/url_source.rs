@@ -1,6 +1,5 @@
 use std::io::{Read, Seek, SeekFrom};
 use symphonia::core::io::MediaSource;
-use std::str::FromStr;
 
 /// Wrapper which impl `Read`, `Seek`, `Send`, `Sync` and `MediaSource`
 /// for reader returned by `ureq` request.

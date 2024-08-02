@@ -47,7 +47,7 @@ impl CpalAudioOutput {
 
         let config = match device.default_output_config() {
             Ok(config) => config,
-            Err(err) => {
+            Err(_err) => {
                 // println!("failed to get default audio output device config: {}", err);
                 return Err(AudioOutputError::OpenStreamError);
             }
@@ -131,7 +131,7 @@ impl<T: AudioOutputSample + cpal::SizedSample> CpalAudioOutputImpl<T> {
         let stream = stream_result.unwrap();
 
         // Start the output stream.
-        if let Err(err) = stream.play() {
+        if let Err(_err) = stream.play() {
             // println!("audio output stream play error: {}", err);
 
             return Err(AudioOutputError::PlayStreamError);

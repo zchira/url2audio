@@ -16,9 +16,9 @@ use crate::player_engine::{PlayerActions, PlayerEngine, PlayerState, PlayerStatu
 pub struct Player {
     inner_player: Arc<RwLock<PlayerEngine>>,
     tx: Sender<PlayerActions>,
-    rx: Receiver<PlayerActions>,
+    // _rx: Receiver<PlayerActions>,
     rx_status: Receiver<PlayerStatus>,
-    tx_status: Sender<PlayerStatus>,
+    // _tx_status: Sender<PlayerStatus>,
     state: Arc<RwLock<PlayerState>>,
 }
 
@@ -28,15 +28,13 @@ impl Player {
         let (tx_status, rx_status) = unbounded();
         let mut to_ret = Player {
             inner_player: Arc::new(RwLock::new(PlayerEngine::new(
-                tx.clone(),
                 rx.clone(),
                 tx_status.clone(),
-                // rx_status.clone()
             ))),
             tx,
-            rx,
+            // rx,
             rx_status,
-            tx_status,
+            // tx_status,
             state: Arc::new(RwLock::new(PlayerState {
                 playing: true,
                 duration: 0.0,
@@ -58,8 +56,7 @@ impl Player {
         // let _ = self.tx.send(PlayerActions::Close);
         let _ = std::thread::spawn(move || {
             let mut p = player.write().unwrap();
-            let result = p.start(); //(&path);
-            println!("Res: {:#?}", result);
+            let _result = p.start(); //(&path);
         });
 
         let rx1 = self.rx_status.clone();
@@ -98,6 +95,10 @@ impl Player {
 
     pub fn pause(&self) {
         let _ = self.tx.send(PlayerActions::Pause);
+    }
+
+    pub fn close(&self) {
+        let _ = self.tx.send(PlayerActions::Close);
     }
 
     pub fn toggle_play(&self) {}

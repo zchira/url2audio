@@ -3,9 +3,9 @@ use std::thread::sleep;
 use url2audio::Player;
 
 mod cpalaudio;
-mod player_engine;
+pub mod player_engine;
 mod resampler;
-mod url_source;
+pub mod url_source;
 
 fn main() {
     let src = "https://podcast.daskoimladja.com/media/2024-05-27-PONEDELJAK_27.05.2024.mp3";
@@ -43,5 +43,10 @@ fn main() {
     p.seek(600.0);
     println!("open again: {:#?}", res);
     sleep(std::time::Duration::from_secs(5));
-    println!("end");
+
+    println!("close");
+    p.close();
+    sleep(std::time::Duration::from_secs(5));
+    println!("closed. end.");
+
 }
