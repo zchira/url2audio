@@ -1,5 +1,5 @@
 mod cpalaudio;
-mod player_engine;
+pub mod player_engine;
 mod resampler;
 mod url_source;
 
@@ -10,6 +10,7 @@ use std::{
 };
 
 use crossbeam_channel::{unbounded, Receiver, Sender};
+use player_engine::Playing;
 
 use crate::player_engine::{PlayerActions, PlayerEngine, PlayerState, PlayerStatus};
 
@@ -36,7 +37,7 @@ impl Player {
             rx_status,
             // tx_status,
             state: Arc::new(RwLock::new(PlayerState {
-                playing: true,
+                playing: Playing::Playing,
                 duration: 0.0,
                 position: 0.0,
                 error: None
@@ -76,7 +77,12 @@ impl Player {
                             state.duration = duration;
                         }
                         PlayerStatus::Error(err) => {
-                            state.error = Some(err);
+                            if state.position - state.duration >= -1.0 {
+                                state.error = None;
+                                state.playing = Playing::Finished;
+                            } else {
+                                state.error = Some(err);
+                            }
                         }
                         PlayerStatus::ClearError => {
                             state.error = None
@@ -102,6 +108,10 @@ impl Player {
     }
 
     pub fn toggle_play(&self) {}
+
+    pub fn is_playing(&self) -> Playing {
+        self.state.read().unwrap().playing.clone()
+    }
 
     /// seek to time from the beginning.
     /// `time` is in seconds

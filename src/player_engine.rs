@@ -30,11 +30,11 @@ pub enum PlayerActions {
 
 #[derive(PartialEq, Clone, Debug)]
 pub enum PlayerStatus {
-    SendPlaying(bool),
+    SendPlaying(Playing),
     /// (position, duration)
     SendTimeStats(f64, f64),
     Error(String),
-    ClearError,
+    ClearError
 }
 
 pub struct PlayerEngine {
@@ -46,8 +46,15 @@ pub struct PlayerEngine {
     drop_initiated: bool,
 }
 
+#[derive(PartialEq, Clone, Debug)]
+pub enum Playing {
+    Playing,
+    Paused,
+    Finished
+}
+
 pub struct PlayerState {
-    pub playing: bool,
+    pub playing: Playing,
     pub duration: f64,
     pub position: f64,
     pub error: Option<String>,
@@ -159,13 +166,13 @@ impl PlayerEngine {
             let a = action.clone();
             if a.is_some() && (a.unwrap() == PlayerActions::Pause) {
                 playing = false;
-                let _s = self.tx_status.send(PlayerStatus::SendPlaying(false));
+                let _s = self.tx_status.send(PlayerStatus::SendPlaying(Playing::Paused));
             }
 
             let a = action.clone();
             if a.is_some() && (a.unwrap() == PlayerActions::Resume) {
                 playing = true;
-                let _s = self.tx_status.send(PlayerStatus::SendPlaying(true));
+                let _s = self.tx_status.send(PlayerStatus::SendPlaying(Playing::Playing));
             }
 
             {
@@ -178,10 +185,10 @@ impl PlayerEngine {
             let packet = if let Some(reader) = self.reader.as_mut() {
                 match reader.next_packet() {
                     Ok(packet) => packet,
-                    Err(_err) => {
-                        let err = "Error reading track";
-                        self.error = Some(err.to_string());
-                        let _ = self.tx_status.send(PlayerStatus::Error(err.to_string()));
+                    Err(e) => {
+                        let err = format!("Error reading next packet [{}]", e);
+                        self.error = Some(err.clone());
+                        let _ = self.tx_status.send(PlayerStatus::Error(err));
                         continue;
                     },
                 }
