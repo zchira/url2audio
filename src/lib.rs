@@ -15,6 +15,7 @@ use player_engine::Playing;
 
 use crate::player_engine::{PlayerActions, PlayerEngine, PlayerState, PlayerStatus};
 
+/// Main Player struct. Wrapper around `player_engine`.
 pub struct Player {
     inner_player: Arc<RwLock<PlayerEngine>>,
     tx: Sender<PlayerActions>,
@@ -25,6 +26,13 @@ pub struct Player {
 }
 
 impl Player {
+    /// Create new instance of Player. Initialized and ready to use.
+    /// On creation inner_thread is started and ready for receiving engine's messages.
+    /// All player methods are fire-and-forget. They are non-blocking but the execution of
+    /// action will not happend immediately.
+    /// Example:
+    /// When `player.pause()` the command message for pausing will be sent, and it will be 
+    /// executed in player_engine's thread's next loop.
     pub fn new() -> Self {
         let (tx, rx) = unbounded();
         let (tx_status, rx_status) = unbounded();
@@ -49,11 +57,12 @@ impl Player {
         to_ret
     }
 
+    /// Open stream from provided url (`src`). Playback will start immediately.
     pub fn open(&mut self, src: &str) {
         let _ = self.tx.send(PlayerActions::Open(src.to_string()));
     }
 
-    pub fn inner_thread(&mut self) {
+    fn inner_thread(&mut self) {
         let player = self.inner_player.clone();
 
         // let _ = self.tx.send(PlayerActions::Close);
@@ -102,24 +111,29 @@ impl Player {
         });
     }
 
+    /// Start playback (if paused)
     pub fn play(&self) {
         let _ = self.tx.send(PlayerActions::Resume);
     }
 
+    /// Pause playback.
     pub fn pause(&self) {
         let _ = self.tx.send(PlayerActions::Pause);
     }
 
+    /// Close opened stream.
     pub fn close(&self) {
         let _ = self.tx.send(PlayerActions::Close);
     }
 
-    pub fn toggle_play(&self) {}
-
+    /// Is player in Playing state.
     pub fn is_playing(&self) -> Playing {
         self.state.read().unwrap().playing.clone()
     }
 
+    /// Return description of buffered chunks.
+    /// Every element of vec contains start and end position of chunk.
+    /// Values are normalized to range 0.0 - 1.0
     pub fn buffer_chunks(&self) -> Vec<(f32, f32)> {
         self.state.read().unwrap().chunks.clone()
     }
@@ -136,26 +150,32 @@ impl Player {
         let _ = self.tx.send(PlayerActions::Seek(new_pos));
     }
 
+    /// Current playback position
     pub fn current_position(&self) -> f64 {
         self.state.read().unwrap().position
     }
 
+    /// Duration in seconds
     pub fn duration(&self) -> f64 {
         self.state.read().unwrap().duration
     }
 
+    /// Indicator if player is in error state.
     pub fn is_in_error_state(&self) -> bool {
         self.state.read().unwrap().error.is_some()
     }
 
+    /// Current error message (if any)
     pub fn error(&self) -> Option<String> {
         self.state.read().unwrap().error.clone()
     }
 
+    /// User friendly display of current tima
     pub fn current_position_display(&self) -> String {
         self.time_to_display(self.current_position())
     }
 
+    /// User friendly display of duration
     pub fn duration_display(&self) -> String {
         self.time_to_display(self.duration())
     }
