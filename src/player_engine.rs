@@ -16,7 +16,7 @@ use symphonia::core::{
 use crate::cpalaudio;
 use crate::{
     cpalaudio::{AudioOutput, CpalAudioOutput},
-    url_source::UrlSource,
+    url_source_buff::UrlSourceBuf,
 };
 
 #[derive(PartialEq, Clone, Debug)]
@@ -33,6 +33,7 @@ pub enum PlayerStatus {
     SendPlaying(Playing),
     /// (position, duration)
     SendTimeStats(f64, f64),
+    ChunkAdded(f32, f32),
     Error(String),
     ClearError
 }
@@ -58,6 +59,7 @@ pub struct PlayerState {
     pub duration: f64,
     pub position: f64,
     pub error: Option<String>,
+    pub chunks: Vec<(f32, f32)>
 }
 
 impl PlayerEngine {
@@ -214,6 +216,8 @@ impl PlayerEngine {
                             // TODO: Check the audio spec. and duration hasn't changed.
                         }
 
+
+
                         let ts = packet.ts();
                         let (position, duration) = update_progress(ts, dur, tb);
                         {
@@ -267,7 +271,7 @@ impl PlayerEngine {
     }
 
     fn open(&mut self, path: &str) -> Result<i32> {
-        let r = UrlSource::new(path);
+        let r = UrlSourceBuf::new(path, Some(self.tx_status.clone()));
         let source = Box::new(r);
 
         let hint = Hint::new();

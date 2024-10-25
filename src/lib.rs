@@ -2,6 +2,7 @@ mod cpalaudio;
 pub mod player_engine;
 mod resampler;
 mod url_source;
+mod url_source_buff;
 
 use std::{
     sync::{Arc, RwLock},
@@ -40,7 +41,8 @@ impl Player {
                 playing: Playing::Playing,
                 duration: 0.0,
                 position: 0.0,
-                error: None
+                error: None,
+                chunks: Default::default()
             })),
         };
         to_ret.inner_thread();
@@ -85,8 +87,13 @@ impl Player {
                             }
                         }
                         PlayerStatus::ClearError => {
-                            state.error = None
+                            state.error = None;
+                            state.chunks = Default::default();
+
                         }
+                        PlayerStatus::ChunkAdded(start, end) => {
+                            state.chunks.push((start, end));
+                        },
                     }
                 }
                 Err(_) => {}
@@ -111,6 +118,10 @@ impl Player {
 
     pub fn is_playing(&self) -> Playing {
         self.state.read().unwrap().playing.clone()
+    }
+
+    pub fn buffer_chunks(&self) -> Vec<(f32, f32)> {
+        self.state.read().unwrap().chunks.clone()
     }
 
     /// seek to time from the beginning.
