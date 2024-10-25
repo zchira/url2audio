@@ -2,6 +2,7 @@ mod cpalaudio;
 pub mod player_engine;
 mod resampler;
 mod url_source;
+mod url_source_buff;
 
 use std::{
     sync::{Arc, RwLock},

@@ -16,7 +16,7 @@ use symphonia::core::{
 use crate::cpalaudio;
 use crate::{
     cpalaudio::{AudioOutput, CpalAudioOutput},
-    url_source::UrlSource,
+    url_source::UrlSourceBuf,
 };
 
 #[derive(PartialEq, Clone, Debug)]
@@ -267,7 +267,7 @@ impl PlayerEngine {
     }
 
     fn open(&mut self, path: &str) -> Result<i32> {
-        let r = UrlSource::new(path);
+        let r = UrlSourceBuf::new(path);
         let source = Box::new(r);
 
         let hint = Hint::new();
