@@ -16,7 +16,7 @@ use symphonia::core::{
 use crate::cpalaudio;
 use crate::{
     cpalaudio::{AudioOutput, CpalAudioOutput},
-    url_source::UrlSourceBuf,
+    url_source_buff::UrlSourceBuf,
 };
 
 #[derive(PartialEq, Clone, Debug)]
@@ -33,6 +33,7 @@ pub enum PlayerStatus {
     SendPlaying(Playing),
     /// (position, duration)
     SendTimeStats(f64, f64),
+    // ChunkAdded(f32, f32),
     Error(String),
     ClearError
 }
@@ -267,7 +268,7 @@ impl PlayerEngine {
     }
 
     fn open(&mut self, path: &str) -> Result<i32> {
-        let r = UrlSourceBuf::new(path);
+        let r = UrlSourceBuf::new(path, None);
         let source = Box::new(r);
 
         let hint = Hint::new();
