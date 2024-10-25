@@ -2,6 +2,8 @@ use std::{collections::BTreeMap, io::{self, Read, Seek, SeekFrom}};
 use symphonia::core::io::MediaSource;
 use crossbeam_channel::Sender;
 
+use crate::player_engine::PlayerStatus;
+
 const CHUNK_SIZE: usize = 65536;
 
 /// Wrapper which impl `Read`, `Seek`, `Send`, `Sync` and `MediaSource`
@@ -12,11 +14,11 @@ pub struct UrlSourceBuf {
     reader: Box<dyn Read + Sync + Send>,
     pos: usize,
     len: Option<u64>,
-    tx: Option<crossbeam_channel::Sender<(f32, f32)>>
+    tx: Option<crossbeam_channel::Sender<PlayerStatus>>
 }
 
 impl UrlSourceBuf {
-    pub fn new(url: &str, tx: Option<Sender<(f32, f32)>>) -> Self {
+    pub fn new(url: &str, tx: Option<Sender<PlayerStatus>>) -> Self {
         let r = ureq::get(url).call();
         let r = r.unwrap().into_reader();
         UrlSourceBuf {
@@ -53,7 +55,7 @@ impl UrlSourceBuf {
                         let start = chunk_key as f32 * CHUNK_SIZE as f32 / l as f32;
                         let end = start + CHUNK_SIZE as f32 / l as f32;
 
-                        let _ = tx.try_send((start, end));
+                        let _ = tx.try_send(PlayerStatus::ChunkAdded(start, end));
                     },
                     None => {},
                 }

@@ -17,6 +17,7 @@ fn main() {
 
     sleep(std::time::Duration::from_secs(5));
 
+    println!("{:#?}", p.buffer_chunks());
     p.seek(120.0);
     sleep(std::time::Duration::from_millis(200));
     p.seek(180.0);
