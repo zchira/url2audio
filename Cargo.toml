@@ -1,6 +1,6 @@
 [package]
 name = "url2audio"
-version = "0.3.1"
+version = "0.4.0"
 authors = ["zchira"]
 license = "GPL-3.0"
 description = "simple-to-use lib for playing audio streams"
@@ -25,7 +25,7 @@ ureq = "2.9.7"
 rubato = "0.12.0"
 arrayvec = "0.7.4"
 rb = "0.3.2"
-tokio = { version = "1.41.0", features = ["sync", "rt"], optional = true }
+tokio = { version = "1.41.0", features = ["sync", "rt", "macros", "rt-multi-thread"], optional = true }
 
 [profile.bench]
 debug = true

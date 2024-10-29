@@ -5,38 +5,44 @@ use std::{
     time::Duration,
 };
 
-use tokio::sync::RwLock;
+use tokio::sync::{Notify, RwLock};
 
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use crate::player_engine::Playing;
 
-use crate::player_engine::{PlayerActions, PlayerEngine, PlayerState, PlayerStatus};
+use crate::player_engine::{PlayerActions, PlayerState, PlayerStatus};
+use crate::player_engine_async::PlayerEngineAsync;
 
 /// Main Player struct. Wrapper around `player_engine`.
 #[cfg(feature = "async")]
 pub struct PlayerAsync {
-    inner_player: Arc<RwLock<PlayerEngine>>,
+    inner_player: Arc<RwLock<PlayerEngineAsync>>,
     tx: Sender<PlayerActions>,
     rx_status: Receiver<PlayerStatus>,
     state: Arc<RwLock<PlayerState>>,
+    notify_open: Arc<Notify>,
+    notify_seek: Arc<Notify>,
+    notify_toggle_play: Arc<Notify>
 }
 
 #[cfg(feature = "async")]
 impl PlayerAsync {
-    /// Create new instance of Player. Initialized and ready to use.
+    /// Create new instance of PlayerAsync. Initialized and ready to use.
     /// On creation inner_thread is started and ready for receiving engine's messages.
-    /// All player methods are fire-and-forget. They are non-blocking but the execution of
-    /// action will not happend immediately.
-    /// Example:
-    /// When `player.pause()` the command message for pausing will be sent, and it will be 
-    /// executed in player_engine's thread's next loop.
+    /// All player methods are async.
     pub fn new() -> Self {
         let (tx, rx) = unbounded();
         let (tx_status, rx_status) = unbounded();
+        let notify_open = Arc::new(Notify::new());
+        let notify_seek = Arc::new(Notify::new());
+        let notify_toggle_play = Arc::new(Notify::new());
         let mut to_ret = PlayerAsync {
-            inner_player: Arc::new(RwLock::new(PlayerEngine::new(
+            inner_player: Arc::new(RwLock::new(PlayerEngineAsync::new(
                 rx.clone(),
                 tx_status.clone(),
+                notify_open.clone(),
+                notify_seek.clone(),
+                notify_toggle_play.clone()
             ))),
             tx,
             // rx,
@@ -49,14 +55,19 @@ impl PlayerAsync {
                 error: None,
                 chunks: Default::default()
             })),
+            notify_open,
+            notify_seek,
+            notify_toggle_play
         };
         to_ret.inner_thread();
         to_ret
     }
 
     /// Open stream from provided url (`src`). Playback will start immediately.
-    pub fn open(&mut self, src: &str) {
+    pub async fn open(&mut self, src: &str) -> bool {
         let _ = self.tx.send(PlayerActions::Open(src.to_string()));
+        self.notify_open.notified().await;
+        self.is_in_error_state().await
     }
 
     fn inner_thread(&mut self) {
@@ -111,18 +122,21 @@ impl PlayerAsync {
     }
 
     /// Start playback (if paused)
-    pub fn play(&self) {
+    pub async fn play(&self) {
         let _ = self.tx.send(PlayerActions::Resume);
+        self.notify_toggle_play.notified().await;
     }
 
     /// Pause playback.
-    pub fn pause(&self) {
+    pub async fn pause(&self) {
         let _ = self.tx.send(PlayerActions::Pause);
+        self.notify_toggle_play.notified().await;
     }
 
     /// Close opened stream.
-    pub fn close(&self) {
+    pub async fn close(&self) {
         let _ = self.tx.send(PlayerActions::Close);
+        self.notify_toggle_play.notified().await;
     }
 
     /// Is player in Playing state.
@@ -139,8 +153,9 @@ impl PlayerAsync {
 
     /// seek to time from the beginning.
     /// `time` is in seconds
-    pub fn seek(&self, time: f64) {
+    pub async fn seek(&self, time: f64) {
         let _ = self.tx.send(PlayerActions::Seek(time));
+        self.notify_seek.notified().await;
     }
 
     /// seek to time relative from current position

@@ -8,3 +8,6 @@ pub mod player;
 #[cfg(feature = "async")]
 pub mod player_async;
 
+#[cfg(feature = "async")]
+pub mod player_engine_async;
+
