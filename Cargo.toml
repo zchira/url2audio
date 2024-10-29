@@ -1,6 +1,6 @@
 [package]
 name = "url2audio"
-version = "0.3.0"
+version = "0.3.1"
 authors = ["zchira"]
 license = "GPL-3.0"
 description = "simple-to-use lib for playing audio streams"
@@ -13,6 +13,10 @@ edition = "2021"
 
 [lib]
 
+[features]
+default = ["async"]
+async = ["dep:tokio"]
+
 [dependencies]
 cpal = "0.15.3"
 crossbeam-channel = "0.5.13"
@@ -21,6 +25,7 @@ ureq = "2.9.7"
 rubato = "0.12.0"
 arrayvec = "0.7.4"
 rb = "0.3.2"
+tokio = { version = "1.41.0", features = ["sync", "rt"], optional = true }
 
 [profile.bench]
 debug = true
