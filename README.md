@@ -13,7 +13,7 @@ Simple to use rust library for playing audio streams.
 
 # How to use?
 
-```
+```rs
 // create Player instance 
 let mut p = Player::new();
 
