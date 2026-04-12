@@ -2,12 +2,6 @@ use std::thread::sleep;
 
 use url2audio::Player;
 
-mod cpalaudio;
-pub mod player_engine;
-mod resampler;
-pub mod url_source;
-pub mod url_source_buff;
-
 fn main() {
     let src = "https://podcast.daskoimladja.com/media/2024-05-27-PONEDELJAK_27.05.2024.mp3";
     // let src = "https://stream.daskoimladja.com:9000/stream";

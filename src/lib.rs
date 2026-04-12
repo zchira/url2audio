@@ -4,11 +4,17 @@ mod resampler;
 mod url_source;
 mod url_source_buff;
 
-use std::{
-    sync::{Arc, RwLock},
-    thread::sleep,
-    time::Duration,
-};
+use std::sync::{Arc, RwLock};
+
+#[derive(thiserror::Error, Debug)]
+pub enum Url2AudioError {
+    #[error("HTTP request failed: {0}")]
+    Http(#[from] ureq::Error),
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("No content-length header")]
+    NoContentLength,
+}
 
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use player_engine::Playing;
@@ -74,9 +80,7 @@ impl Player {
         let rx1 = self.rx_status.clone();
         let s = self.state.clone();
         let _ = std::thread::spawn(move || loop {
-            let a = rx1.try_recv();
-
-            match a {
+            match rx1.recv() {
                 Ok(a) => {
                     let mut state = s.write().unwrap();
                     match a {
@@ -98,16 +102,14 @@ impl Player {
                         PlayerStatus::ClearError => {
                             state.error = None;
                             state.chunks = Default::default();
-
                         }
                         PlayerStatus::ChunkAdded(start, end) => {
                             state.chunks.push((start, end));
                         },
                     }
                 }
-                Err(_) => {}
+                Err(_) => break,
             }
-            sleep(Duration::from_millis(10));
         });
     }
 

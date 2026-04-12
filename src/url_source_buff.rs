@@ -3,6 +3,7 @@ use symphonia::core::io::MediaSource;
 use crossbeam_channel::Sender;
 
 use crate::player_engine::PlayerStatus;
+use crate::Url2AudioError;
 
 const CHUNK_SIZE: usize = 65536;
 
@@ -18,17 +19,19 @@ pub struct UrlSourceBuf {
 }
 
 impl UrlSourceBuf {
-    pub fn new(url: &str, tx: Option<Sender<PlayerStatus>>) -> Self {
-        let r = ureq::get(url).call();
-        let r = r.unwrap().into_reader();
-        UrlSourceBuf {
+    pub fn new(url: &str, tx: Option<Sender<PlayerStatus>>) -> Result<Self, Url2AudioError> {
+        let r = ureq::get(url).call()?;
+        let len = r.header("content-length")
+            .and_then(|s| s.parse::<u64>().ok());
+        let reader = r.into_reader();
+        Ok(UrlSourceBuf {
             chunks: Default::default(),
-            reader: Box::new(r),
+            reader: Box::new(reader),
             url: url.to_string(),
             pos: 0,
             tx,
-            len: None
-        }
+            len,
+        })
     }
 
     fn get_chunk_key(&self, p: usize) -> usize {
@@ -99,21 +102,7 @@ impl MediaSource for UrlSourceBuf {
     }
 
     fn byte_len(&self) -> Option<u64> {
-        if let Ok(r) = ureq::get(&self.url).call() {
-            let cl = r.header("content-length");
-            match cl {
-                Some(len_str) => {
-                    let len: Result<u64, _> = len_str.to_string().parse();
-                    match len {
-                        Ok(l) => Some(l),
-                        Err(_) => None,
-                    }
-                },
-                None => None,
-            }
-        } else {
-            None
-        }
+        self.len
     }
 }
 
@@ -165,8 +154,11 @@ impl Seek for UrlSourceBuf {
                 } else {
                     let mut chunk = [0u8; CHUNK_SIZE];
                     let chunk_begin = chunk_key * CHUNK_SIZE;
-                    let res = ureq::get(&self.url).set("Range", &format!("bytes={}-{}", chunk_begin, chunk_begin + CHUNK_SIZE)).call();
-                    self.reader = Box::new(res.unwrap().into_reader());
+                    let res = ureq::get(&self.url)
+                        .set("Range", &format!("bytes={}-{}", chunk_begin, chunk_begin + CHUNK_SIZE))
+                        .call()
+                        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+                    self.reader = Box::new(res.into_reader());
                     self.reader.read_exact(&mut chunk)?;
                     self.insert_chunk(chunk_key, &chunk);
                     self.pos = p as usize;
@@ -174,8 +166,9 @@ impl Seek for UrlSourceBuf {
                 }
             },
             SeekFrom::End(p) => {
-                // TODO: fix
-                let new_pos = self.byte_len().unwrap() as i64 + p;
+                let total_len = self.byte_len()
+                    .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "no content-length available"))?;
+                let new_pos = total_len as i64 + p;
                 let chunk_key = self.get_chunk_key(new_pos as usize);
 
                 if self.has_chunk(chunk_key) {
@@ -184,8 +177,11 @@ impl Seek for UrlSourceBuf {
                 } else {
                     let mut chunk = [0u8; CHUNK_SIZE];
                     let chunk_begin = chunk_key * CHUNK_SIZE;
-                    let res = ureq::get(&self.url).set("Range", &format!("bytes=-{}", chunk_begin)).call();
-                    self.reader = Box::new(res.unwrap().into_reader());
+                    let res = ureq::get(&self.url)
+                        .set("Range", &format!("bytes=-{}", chunk_begin))
+                        .call()
+                        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+                    self.reader = Box::new(res.into_reader());
 
                     self.reader.read_exact(&mut chunk)?;
                     self.insert_chunk(chunk_key, &chunk);
@@ -202,8 +198,11 @@ impl Seek for UrlSourceBuf {
                 } else {
                     let mut chunk = [0u8; CHUNK_SIZE];
                     let chunk_begin = chunk_key * CHUNK_SIZE;
-                    let res = ureq::get(&self.url).set("Range", &format!("bytes={}-{}", chunk_begin, chunk_begin + CHUNK_SIZE)).call();
-                    self.reader = Box::new(res.unwrap().into_reader());
+                    let res = ureq::get(&self.url)
+                        .set("Range", &format!("bytes={}-{}", chunk_begin, chunk_begin + CHUNK_SIZE))
+                        .call()
+                        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+                    self.reader = Box::new(res.into_reader());
                     self.reader.read_exact(&mut chunk)?;
                     self.insert_chunk(chunk_key, &chunk);
                     self.pos = p as usize;
