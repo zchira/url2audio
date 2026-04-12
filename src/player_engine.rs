@@ -34,7 +34,10 @@ pub enum PlayerStatus {
     SendTimeStats(f64, f64),
     ChunkAdded(f32, f32),
     Error(String),
-    ClearError
+    ClearError,
+    Opened(String),
+    Closed,
+    Seeked(f64),
 }
 
 pub struct PlayerEngine {
@@ -58,7 +61,7 @@ pub struct PlayerState {
     pub duration: f64,
     pub position: f64,
     pub error: Option<String>,
-    pub chunks: Vec<(f32, f32)>
+    pub chunks: Vec<(f32, f32)>,
 }
 
 enum ActionResult {
@@ -90,13 +93,19 @@ impl PlayerEngine {
         audio_output: &mut Option<Box<dyn AudioOutput>>,
     ) -> ActionResult {
         match action {
-            PlayerActions::Close => ActionResult::Break,
+            PlayerActions::Close => {
+                let _ = self.tx_status.send(PlayerStatus::Closed);
+                ActionResult::Break
+            }
             PlayerActions::Open(src) => {
                 self.error = None;
                 *decoder = None;
                 *audio_output = None;
                 let _ = self.tx_status.send(PlayerStatus::ClearError);
                 let _res = self.open(src);
+                if self.error.is_none() {
+                    let _ = self.tx_status.send(PlayerStatus::Opened(src.clone()));
+                }
                 ActionResult::Continue
             }
             PlayerActions::Pause => {
@@ -310,13 +319,15 @@ impl PlayerEngine {
                             if let PlayerActions::Seek(ref t) = a {
                                 let ts: Time = t.clone().into();
                                 if let Some(reader) = self.reader.as_mut() {
-                                    let _r = reader.seek(
+                                    if reader.seek(
                                         SeekMode::Accurate,
                                         SeekTo::Time {
                                             time: ts,
                                             track_id: Some(0),
                                         },
-                                    );
+                                    ).is_ok() {
+                                        let _ = self.tx_status.send(PlayerStatus::Seeked(*t));
+                                    }
                                 }
                             }
                         }

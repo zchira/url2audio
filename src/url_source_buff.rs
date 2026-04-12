@@ -6,6 +6,7 @@ use crate::player_engine::PlayerStatus;
 use crate::Url2AudioError;
 
 const CHUNK_SIZE: usize = 65536;
+const MAX_CHUNK_DISTANCE: usize = 32;
 
 /// Wrapper which impl `Read`, `Seek`, `Send`, `Sync` and `MediaSource`
 /// for reader returned by `ureq` request.
@@ -37,6 +38,13 @@ impl UrlSourceBuf {
     fn get_chunk_key(&self, p: usize) -> usize {
         let key = p / CHUNK_SIZE;
         key
+    }
+
+    fn evict_distant_chunks(&mut self) {
+        let current_key = self.get_chunk_key(self.pos);
+        let min = current_key.saturating_sub(MAX_CHUNK_DISTANCE);
+        let max = current_key + MAX_CHUNK_DISTANCE;
+        self.chunks.retain(|&k, _| k >= min && k <= max);
     }
 
     fn has_chunk(&self, key: usize) -> bool {
@@ -139,6 +147,7 @@ impl Read for UrlSourceBuf {
         let s = [v1, v2].concat();
         buf.copy_from_slice(&s);
         self.pos = self.pos + bytes_to_read;
+        self.evict_distant_chunks();
         Ok(bytes_to_read)
     }
 }
