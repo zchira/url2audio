@@ -4,11 +4,17 @@ mod resampler;
 mod url_source;
 mod url_source_buff;
 
-use std::{
-    sync::{Arc, RwLock},
-    thread::sleep,
-    time::Duration,
-};
+use std::sync::{Arc, RwLock};
+
+#[derive(thiserror::Error, Debug)]
+pub enum Url2AudioError {
+    #[error("HTTP request failed: {0}")]
+    Http(#[from] ureq::Error),
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("No content-length header")]
+    NoContentLength,
+}
 
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use player_engine::Playing;
@@ -19,10 +25,9 @@ use crate::player_engine::{PlayerActions, PlayerEngine, PlayerState, PlayerStatu
 pub struct Player {
     inner_player: Arc<RwLock<PlayerEngine>>,
     tx: Sender<PlayerActions>,
-    // _rx: Receiver<PlayerActions>,
     rx_status: Receiver<PlayerStatus>,
-    // _tx_status: Sender<PlayerStatus>,
     state: Arc<RwLock<PlayerState>>,
+    events_rx: Receiver<PlayerStatus>,
 }
 
 impl Player {
@@ -36,24 +41,24 @@ impl Player {
     pub fn new() -> Self {
         let (tx, rx) = unbounded();
         let (tx_status, rx_status) = unbounded();
+        let (tx_events, rx_events) = unbounded();
         let mut to_ret = Player {
             inner_player: Arc::new(RwLock::new(PlayerEngine::new(
                 rx.clone(),
                 tx_status.clone(),
             ))),
             tx,
-            // rx,
             rx_status,
-            // tx_status,
             state: Arc::new(RwLock::new(PlayerState {
                 playing: Playing::Playing,
                 duration: 0.0,
                 position: 0.0,
                 error: None,
-                chunks: Default::default()
+                chunks: Default::default(),
             })),
+            events_rx: rx_events,
         };
-        to_ret.inner_thread();
+        to_ret.inner_thread(tx_events);
         to_ret
     }
 
@@ -62,52 +67,52 @@ impl Player {
         let _ = self.tx.send(PlayerActions::Open(src.to_string()));
     }
 
-    fn inner_thread(&mut self) {
+    fn inner_thread(&mut self, tx_events: Sender<PlayerStatus>) {
         let player = self.inner_player.clone();
 
-        // let _ = self.tx.send(PlayerActions::Close);
         let _ = std::thread::spawn(move || {
             let mut p = player.write().unwrap();
-            let _result = p.start(); //(&path);
+            let _result = p.start();
         });
 
         let rx1 = self.rx_status.clone();
         let s = self.state.clone();
         let _ = std::thread::spawn(move || loop {
-            let a = rx1.try_recv();
-
-            match a {
+            match rx1.recv() {
                 Ok(a) => {
                     let mut state = s.write().unwrap();
                     match a {
-                        PlayerStatus::SendPlaying(playing) => {
-                            state.playing = playing;
+                        PlayerStatus::SendPlaying(ref playing) => {
+                            state.playing = playing.clone();
+                            let _ = tx_events.send(a);
                         }
                         PlayerStatus::SendTimeStats(position, duration) => {
                             state.position = position;
                             state.duration = duration;
                         }
-                        PlayerStatus::Error(err) => {
+                        PlayerStatus::Error(ref err) => {
                             if state.position - state.duration >= -1.0 {
                                 state.error = None;
                                 state.playing = Playing::Finished;
                             } else {
-                                state.error = Some(err);
+                                state.error = Some(err.clone());
                             }
+                            let _ = tx_events.send(a);
                         }
                         PlayerStatus::ClearError => {
                             state.error = None;
                             state.chunks = Default::default();
-
                         }
                         PlayerStatus::ChunkAdded(start, end) => {
                             state.chunks.push((start, end));
                         },
+                        PlayerStatus::Opened(_) | PlayerStatus::Closed | PlayerStatus::Seeked(_) => {
+                            let _ = tx_events.send(a);
+                        },
                     }
                 }
-                Err(_) => {}
+                Err(_) => break,
             }
-            sleep(Duration::from_millis(10));
         });
     }
 
@@ -168,6 +173,12 @@ impl Player {
     /// Current error message (if any)
     pub fn error(&self) -> Option<String> {
         self.state.read().unwrap().error.clone()
+    }
+
+    /// Receiver for player events (action feedback, errors, play state changes).
+    /// Use `recv()` or `try_recv()` to consume events.
+    pub fn events(&self) -> &Receiver<PlayerStatus> {
+        &self.events_rx
     }
 
     /// User friendly display of current tima

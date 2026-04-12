@@ -1,5 +1,4 @@
 use crossbeam_channel::{Receiver, Sender};
-use std::thread::sleep;
 use symphonia::core::codecs::{Decoder, CODEC_TYPE_NULL};
 use symphonia::core::units::TimeBase;
 use symphonia::core::{
@@ -35,7 +34,10 @@ pub enum PlayerStatus {
     SendTimeStats(f64, f64),
     ChunkAdded(f32, f32),
     Error(String),
-    ClearError
+    ClearError,
+    Opened(String),
+    Closed,
+    Seeked(f64),
 }
 
 pub struct PlayerEngine {
@@ -59,7 +61,13 @@ pub struct PlayerState {
     pub duration: f64,
     pub position: f64,
     pub error: Option<String>,
-    pub chunks: Vec<(f32, f32)>
+    pub chunks: Vec<(f32, f32)>,
+}
+
+enum ActionResult {
+    Break,
+    Continue,
+    Handled,
 }
 
 impl PlayerEngine {
@@ -74,6 +82,43 @@ impl PlayerEngine {
             src: None,
             error: None,
             drop_initiated: false
+        }
+    }
+
+    fn handle_action(
+        &mut self,
+        action: &PlayerActions,
+        playing: &mut bool,
+        decoder: &mut Option<Box<dyn Decoder>>,
+        audio_output: &mut Option<Box<dyn AudioOutput>>,
+    ) -> ActionResult {
+        match action {
+            PlayerActions::Close => {
+                let _ = self.tx_status.send(PlayerStatus::Closed);
+                ActionResult::Break
+            }
+            PlayerActions::Open(src) => {
+                self.error = None;
+                *decoder = None;
+                *audio_output = None;
+                let _ = self.tx_status.send(PlayerStatus::ClearError);
+                let _res = self.open(src);
+                if self.error.is_none() {
+                    let _ = self.tx_status.send(PlayerStatus::Opened(src.clone()));
+                }
+                ActionResult::Continue
+            }
+            PlayerActions::Pause => {
+                *playing = false;
+                let _ = self.tx_status.send(PlayerStatus::SendPlaying(Playing::Paused));
+                ActionResult::Handled
+            }
+            PlayerActions::Resume => {
+                *playing = true;
+                let _ = self.tx_status.send(PlayerStatus::SendPlaying(Playing::Playing));
+                ActionResult::Handled
+            }
+            PlayerActions::Seek(_) => ActionResult::Handled,
         }
     }
 
@@ -98,14 +143,10 @@ impl PlayerEngine {
             };
 
             if let Some(ref a) = action {
-                match a {
-                    PlayerActions::Close => break Ok(0), //todo!(),
-                    PlayerActions::Open(src) => {
-                        self.error = None;
-                        decoder = None;
-                        audio_output = None;
-                        let _ = self.tx_status.send(PlayerStatus::ClearError);
-                        let _res = self.open(&src);
+                match self.handle_action(a, &mut playing, &mut decoder, &mut audio_output) {
+                    ActionResult::Break => break Ok(0),
+                    ActionResult::Continue => {
+                        // Open was handled, now set up decoder for the new stream
                         let track_num: Option<usize> = None;
 
                         if let Some(reader) = self.reader.as_mut() {
@@ -127,7 +168,6 @@ impl PlayerEngine {
                                     }
                                 };
 
-                                // Create a decoder for the track.
                                 let dec = symphonia::default::get_codecs()
                                     .make(&track.codec_params, &decode_opts)?;
 
@@ -147,41 +187,94 @@ impl PlayerEngine {
                                     continue;
                             };
                         }
+                        continue;
                     }
-                    _ => {}
+                    ActionResult::Handled => {}
                 }
             }
 
+            // Idle: error state — block until next command
             if self.error.is_some() {
-                sleep(std::time::Duration::from_millis(200));
-                continue;
-            }
-
-
-            if self.reader.is_none() {
-                sleep(std::time::Duration::from_millis(200));
-                continue;
-            }
-
-            ///// play_track
-
-            let a = action.clone();
-            if a.is_some() && (a.unwrap() == PlayerActions::Pause) {
-                playing = false;
-                let _s = self.tx_status.send(PlayerStatus::SendPlaying(Playing::Paused));
-            }
-
-            let a = action.clone();
-            if a.is_some() && (a.unwrap() == PlayerActions::Resume) {
-                playing = true;
-                let _s = self.tx_status.send(PlayerStatus::SendPlaying(Playing::Playing));
-            }
-
-            {
-                if !playing {
-                    sleep(std::time::Duration::from_millis(200));
-                    continue;
+                match self.rx.recv() {
+                    Ok(a) => {
+                        match self.handle_action(&a, &mut playing, &mut decoder, &mut audio_output) {
+                            ActionResult::Break => break Ok(0),
+                            _ => {}
+                        }
+                    }
+                    Err(_) => break Ok(0),
                 }
+                continue;
+            }
+
+            // Idle: no reader — block until next command
+            if self.reader.is_none() {
+                match self.rx.recv() {
+                    Ok(a) => {
+                        match self.handle_action(&a, &mut playing, &mut decoder, &mut audio_output) {
+                            ActionResult::Break => break Ok(0),
+                            ActionResult::Continue => {
+                                let track_num: Option<usize> = None;
+
+                                if let Some(reader) = self.reader.as_mut() {
+                                    track = track_num
+                                        .and_then(|t| reader.tracks().get(t))
+                                        .or_else(|| first_supported_track(reader.tracks()));
+
+                                    track_id = track.unwrap().id;
+
+                                    (tb, dur, decoder) = if let Some(r) = self.reader.as_mut() {
+                                        let track =
+                                        match r.tracks().iter().find(|track| track.id == track_id) {
+                                            Some(track) => track,
+                                            _ => {
+                                                let err = "Error reading track";
+                                                self.error = Some(err.to_string());
+                                                let _ = self.tx_status.send(PlayerStatus::Error(err.to_string()));
+                                                continue;
+                                            }
+                                        };
+
+                                        let dec = symphonia::default::get_codecs()
+                                            .make(&track.codec_params, &decode_opts)?;
+
+                                        let tb = track.codec_params.time_base;
+
+                                        let dur = track
+                                            .codec_params
+                                            .n_frames
+                                            .map(|frames| {
+                                                track.codec_params.start_ts + frames
+                                            });
+                                        (tb, dur, Some(dec))
+                                    } else {
+                                            let err = "reader is none";
+                                            self.error = Some(err.to_string());
+                                            let _ = self.tx_status.send(PlayerStatus::Error(err.to_string()));
+                                            continue;
+                                    };
+                                }
+                            }
+                            ActionResult::Handled => {}
+                        }
+                    }
+                    Err(_) => break Ok(0),
+                }
+                continue;
+            }
+
+            // Idle: paused — block until next command
+            if !playing {
+                match self.rx.recv() {
+                    Ok(a) => {
+                        match self.handle_action(&a, &mut playing, &mut decoder, &mut audio_output) {
+                            ActionResult::Break => break Ok(0),
+                            _ => {}
+                        }
+                    }
+                    Err(_) => break Ok(0),
+                }
+                continue;
             }
 
             let packet = if let Some(reader) = self.reader.as_mut() {
@@ -212,45 +305,34 @@ impl PlayerEngine {
                             let spec = *decoded.spec();
                             let duration = decoded.capacity() as u64;
                             audio_output.replace(try_open(spec, duration).unwrap());
-                        } else {
-                            // TODO: Check the audio spec. and duration hasn't changed.
                         }
-
-
 
                         let ts = packet.ts();
                         let (position, duration) = update_progress(ts, dur, tb);
-                        {
-                            let _ = self.tx_status.send(PlayerStatus::SendTimeStats(position, duration));
-                        }
+                        let _ = self.tx_status.send(PlayerStatus::SendTimeStats(position, duration));
 
                         if let Some(ref mut audio_output) = audio_output {
                             audio_output.write(decoded).unwrap()
                         }
 
-                        let a = action.clone();
-                        if a.is_some() {
-                            let a = a.as_ref().unwrap();
-                            match a {
-                                PlayerActions::Seek(ref t) => {
-                                    let ts: Time = t.clone().into(); // packet.ts() + 30;
-                                    if let Some(reader) = self.reader.as_mut() {
-                                        let _r = reader.seek(
-                                            SeekMode::Accurate,
-                                            SeekTo::Time {
-                                                time: ts,
-                                                track_id: Some(0),
-                                            },
-                                        );
+                        if let Some(ref a) = action {
+                            if let PlayerActions::Seek(ref t) = a {
+                                let ts: Time = t.clone().into();
+                                if let Some(reader) = self.reader.as_mut() {
+                                    if reader.seek(
+                                        SeekMode::Accurate,
+                                        SeekTo::Time {
+                                            time: ts,
+                                            track_id: Some(0),
+                                        },
+                                    ).is_ok() {
+                                        let _ = self.tx_status.send(PlayerStatus::Seeked(*t));
                                     }
                                 }
-                                _ => {}
                             }
                         }
                     }
                     Err(Error::DecodeError(err)) => {
-                        // Decode errors are not fatal. Print the error message and try to decode the next
-                        // packet as usual.
                         let err = &format!("decode error: {}", err);
                         self.error = Some(err.to_string());
                         let _ = self.tx_status.send(PlayerStatus::Error(err.to_string()));
@@ -264,14 +346,20 @@ impl PlayerEngine {
                     }
                 };
             }
-            sleep(std::time::Duration::from_millis(20));
-            ////
         };
         result
     }
 
     fn open(&mut self, path: &str) -> Result<i32> {
-        let r = UrlSourceBuf::new(path, Some(self.tx_status.clone()));
+        let r = match UrlSourceBuf::new(path, Some(self.tx_status.clone())) {
+            Ok(r) => r,
+            Err(e) => {
+                let err = format!("Failed to open URL: {}", e);
+                self.error = Some(err.clone());
+                let _ = self.tx_status.send(PlayerStatus::Error(err));
+                return Ok(1);
+            }
+        };
         let source = Box::new(r);
 
         let hint = Hint::new();

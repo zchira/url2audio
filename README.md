@@ -9,7 +9,8 @@
 
 # url2audio
 
-Simple to use rust library for playing audio streams.
+A Simple to use rust library for playing audio streams. 
+
 
 # How to use?
 
