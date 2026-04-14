@@ -334,17 +334,49 @@ impl PlayerEngine {
                         }
 
                         if let Some(PlayerActions::Seek(t)) = action {
-                            let ts: Time = t.into();
-                            if let Some(reader) = self.reader.as_mut() {
-                                if reader.seek(
-                                    SeekMode::Coarse,
-                                    SeekTo::Time {
-                                        time: ts,
-                                        track_id: Some(0),
-                                    },
-                                ).is_ok() {
-                                    let _ = self.tx_status.send(PlayerStatus::Seeked(t));
+                            let mut seek_target = t;
+
+                            'seek_loop: loop {
+                                // Drain any seeks that arrived during audio write or previous seek
+                                loop {
+                                    match self.rx.try_recv() {
+                                        Ok(PlayerActions::Seek(next_t)) => seek_target = next_t,
+                                        Ok(other) => { deferred_action = Some(other); break; }
+                                        Err(_) => break,
+                                    }
                                 }
+
+                                let ts: Time = seek_target.into();
+                                if let Some(reader) = self.reader.as_mut() {
+                                    if reader.seek(
+                                        SeekMode::Coarse,
+                                        SeekTo::Time {
+                                            time: ts,
+                                            track_id: Some(0),
+                                        },
+                                    ).is_ok() {
+                                        // Drain any seeks that arrived during reader.seek()
+                                        let mut found_newer = false;
+                                        loop {
+                                            match self.rx.try_recv() {
+                                                Ok(PlayerActions::Seek(next_t)) => {
+                                                    seek_target = next_t;
+                                                    found_newer = true;
+                                                }
+                                                Ok(other) => { deferred_action = Some(other); break; }
+                                                Err(_) => break,
+                                            }
+                                        }
+
+                                        if found_newer {
+                                            continue 'seek_loop;
+                                        }
+
+                                        // Channel is empty — send final position only now
+                                        let _ = self.tx_status.send(PlayerStatus::Seeked(seek_target));
+                                    }
+                                }
+                                break 'seek_loop;
                             }
                         }
                     }
