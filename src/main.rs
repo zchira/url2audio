@@ -30,7 +30,21 @@ fn main() {
     println!("{:#?}", p.buffer_chunks());
 
     println!("seeking to 120s...");
-    p.seek(120.0);
+    p.seek(1200.0);
+    sleep(std::time::Duration::from_millis(5));
+    p.seek(1500.0);
+    sleep(std::time::Duration::from_millis(5));
+    p.seek(1800.0);
+    sleep(std::time::Duration::from_millis(5));
+    p.seek(2800.0);
+    sleep(std::time::Duration::from_millis(5));
+    p.seek(3800.0);
+    sleep(std::time::Duration::from_millis(5));
+    p.seek(4800.0);
+    sleep(std::time::Duration::from_millis(5));
+    p.seek(2000.0);
+    sleep(std::time::Duration::from_millis(5));
+    p.seek(1000.0);
     sleep(std::time::Duration::from_millis(5000));
 
     println!("seeking to 180s...");

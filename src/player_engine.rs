@@ -60,6 +60,7 @@ pub struct PlayerState {
     pub playing: Playing,
     pub duration: f64,
     pub position: f64,
+    pub pending_seek: Option<f64>,
     pub error: Option<String>,
     pub chunks: Vec<(f32, f32)>,
 }
@@ -131,7 +132,7 @@ impl PlayerEngine {
         let mut decoder: Option<Box<dyn Decoder>> = None;
         let mut audio_output = None;
         let decode_opts: DecoderOptions = Default::default();
-        let result = loop {
+        let result = 'main: loop {
 
             if self.drop_initiated {
                 break Ok(0);
@@ -298,6 +299,23 @@ impl PlayerEngine {
                 continue;
             }
 
+            // If action is a seek, drain any additional seeks queued during audio write
+            // so we execute only the latest target. Non-seek actions are deferred.
+            let mut deferred_action: Option<PlayerActions> = None;
+            let action = if let Some(PlayerActions::Seek(t)) = action {
+                let mut final_t = t;
+                loop {
+                    match self.rx.try_recv() {
+                        Ok(PlayerActions::Seek(next_t)) => final_t = next_t,
+                        Ok(other) => { deferred_action = Some(other); break; }
+                        Err(_) => break,
+                    }
+                }
+                Some(PlayerActions::Seek(final_t))
+            } else {
+                action
+            };
+
             if let Some(ref mut decoder) = decoder {
                 match decoder.decode(&packet) {
                     Ok(decoded) => {
@@ -315,19 +333,17 @@ impl PlayerEngine {
                             audio_output.write(decoded).unwrap()
                         }
 
-                        if let Some(ref a) = action {
-                            if let PlayerActions::Seek(ref t) = a {
-                                let ts: Time = t.clone().into();
-                                if let Some(reader) = self.reader.as_mut() {
-                                    if reader.seek(
-                                        SeekMode::Accurate,
-                                        SeekTo::Time {
-                                            time: ts,
-                                            track_id: Some(0),
-                                        },
-                                    ).is_ok() {
-                                        let _ = self.tx_status.send(PlayerStatus::Seeked(*t));
-                                    }
+                        if let Some(PlayerActions::Seek(t)) = action {
+                            let ts: Time = t.into();
+                            if let Some(reader) = self.reader.as_mut() {
+                                if reader.seek(
+                                    SeekMode::Coarse,
+                                    SeekTo::Time {
+                                        time: ts,
+                                        track_id: Some(0),
+                                    },
+                                ).is_ok() {
+                                    let _ = self.tx_status.send(PlayerStatus::Seeked(t));
                                 }
                             }
                         }
@@ -345,6 +361,14 @@ impl PlayerEngine {
                         continue;
                     }
                 };
+            }
+
+            // Handle any non-seek action intercepted during seek drain
+            if let Some(other) = deferred_action {
+                match self.handle_action(&other, &mut playing, &mut decoder, &mut audio_output) {
+                    ActionResult::Break => break 'main Ok(0),
+                    _ => {}
+                }
             }
         };
         result

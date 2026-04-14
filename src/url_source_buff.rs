@@ -11,7 +11,7 @@ const MAX_CHUNK_DISTANCE: usize = 32;
 /// Wrapper which impl `Read`, `Seek`, `Send`, `Sync` and `MediaSource`
 /// for reader returned by `ureq` request.
 pub struct UrlSourceBuf {
-    chunks: BTreeMap<usize, [u8; CHUNK_SIZE]>,
+    chunks: BTreeMap<usize, Vec<u8>>,
     url: String,
     reader: Box<dyn Read + Sync + Send>,
     pos: usize,
@@ -36,8 +36,7 @@ impl UrlSourceBuf {
     }
 
     fn get_chunk_key(&self, p: usize) -> usize {
-        let key = p / CHUNK_SIZE;
-        key
+        p / CHUNK_SIZE
     }
 
     fn evict_distant_chunks(&mut self) {
@@ -48,56 +47,54 @@ impl UrlSourceBuf {
     }
 
     fn has_chunk(&self, key: usize) -> bool {
-        self.chunks.get(&key).is_some()
+        self.chunks.contains_key(&key)
     }
 
-    fn insert_chunk(&mut self, chunk_key: usize, chunk: &[u8;CHUNK_SIZE]) {
-        self.chunks.insert(chunk_key, *chunk);
-        match self.tx.as_ref() {
-            Some(tx) => {
-                self.len = if self.len.is_none() {
-                    self.byte_len()
-                } else {
-                    self.len
-                };
-
-                match self.len {
-                    Some(l) => {
-                        let start = chunk_key as f32 * CHUNK_SIZE as f32 / l as f32;
-                        let end = start + CHUNK_SIZE as f32 / l as f32;
-
-                        let _ = tx.try_send(PlayerStatus::ChunkAdded(start, end));
-                    },
-                    None => {},
-                }
-            },
-            None => {},
+    fn insert_chunk(&mut self, chunk_key: usize, chunk: Vec<u8>) {
+        if let Some(tx) = self.tx.as_ref() {
+            self.len = self.len.or_else(|| self.byte_len());
+            if let Some(l) = self.len {
+                let start = chunk_key as f32 * CHUNK_SIZE as f32 / l as f32;
+                let end = start + CHUNK_SIZE as f32 / l as f32;
+                let _ = tx.try_send(PlayerStatus::ChunkAdded(start, end));
+            }
         }
+        self.chunks.insert(chunk_key, chunk);
     }
 
-    fn get_bytes_from_chunk(&mut self, chunk_key: usize, offset: usize, num_of_bytes: usize) -> Result<Vec<u8>, io::Error> {
-        // let mut arr = vec![0; num_of_bytes];
-
+    /// Reopen the HTTP reader from the chunk boundary of the current `pos`,
+    /// using an open-ended Range so subsequent sequential reads keep working.
+    /// Pre-fetches and caches the first chunk if not already present.
+    fn reposition_reader(&mut self) -> io::Result<()> {
+        let chunk_key = self.get_chunk_key(self.pos);
+        let chunk_begin = chunk_key * CHUNK_SIZE;
+        let res = ureq::get(&self.url)
+            .set("Range", &format!("bytes={}-", chunk_begin))
+            .call()
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        self.reader = Box::new(res.into_reader());
         if !self.has_chunk(chunk_key) {
-            let mut b = [0u8;CHUNK_SIZE];
-            self.reader.read_exact(&mut b)?;
-            self.insert_chunk(chunk_key, &b);
+            let chunk = Self::read_chunk_from_reader(&mut self.reader)?;
+            self.insert_chunk(chunk_key, chunk);
         }
+        Ok(())
+    }
 
-        let chunk = self.chunks.get(&chunk_key).unwrap();
-        let bytes_to_read = if num_of_bytes > CHUNK_SIZE - offset { CHUNK_SIZE - offset } else { num_of_bytes };
-        let v1 = chunk[offset..offset + bytes_to_read].to_vec();
-
-        let v2 = if bytes_to_read < num_of_bytes {
-            let d = num_of_bytes - bytes_to_read;
-            let additional = self.get_bytes_from_chunk(chunk_key + 1, 0, d)?;
-            additional
-        } else {
-            Default::default()
-        };
-
-        let s = [v1, v2].concat();
-        Ok(s)
+    /// Read up to CHUNK_SIZE bytes from `reader` into a heap-allocated Vec.
+    /// Tolerates short reads (e.g. at EOF) — returned Vec is always CHUNK_SIZE,
+    /// zero-padded if fewer bytes are available.
+    fn read_chunk_from_reader(reader: &mut Box<dyn Read + Sync + Send>) -> io::Result<Vec<u8>> {
+        let mut buf = vec![0u8; CHUNK_SIZE];
+        let mut bytes_read = 0;
+        while bytes_read < CHUNK_SIZE {
+            match reader.read(&mut buf[bytes_read..]) {
+                Ok(0) => break, // EOF — zero-pad the rest
+                Ok(n) => bytes_read += n,
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(buf)
     }
 }
 
@@ -116,107 +113,45 @@ impl MediaSource for UrlSourceBuf {
 
 
 impl Read for UrlSourceBuf {
-    fn read(&mut self, buf: &mut [u8]) -> std::result::Result<usize, std::io::Error> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let chunk_key = self.pos / CHUNK_SIZE;
-        let offset = self.pos - CHUNK_SIZE * chunk_key;
-        let offset = offset as usize;
+        let offset = self.pos % CHUNK_SIZE;
 
         if !self.has_chunk(chunk_key) {
-            let mut b = [0u8;CHUNK_SIZE];
-            self.reader.read_exact(&mut b)?;
-            self.insert_chunk(chunk_key, &b);
+            let chunk = Self::read_chunk_from_reader(&mut self.reader)?;
+            self.insert_chunk(chunk_key, chunk);
         }
 
-        let bytes_to_read = if buf.len() > CHUNK_SIZE - offset { CHUNK_SIZE - offset } else { buf.len() };
-        let v1;
-
-        {
-            let chunk = self.chunks.get(&chunk_key).unwrap();
-            let s = &chunk[offset..offset + bytes_to_read]; //offset..offset+bytes_to_read];
-            v1 = s.to_vec();
-        }
-
-        let v2: Vec<u8> = if bytes_to_read < buf.len() {
-            let d = buf.len() - bytes_to_read;
-            let additional_bytes = self.get_bytes_from_chunk(chunk_key + 1, 0, d)?;
-            additional_bytes
-        } else {
-            Default::default()
-        };
-
-        let s = [v1, v2].concat();
-        buf.copy_from_slice(&s);
-        self.pos = self.pos + bytes_to_read;
+        let chunk = self.chunks.get(&chunk_key).unwrap();
+        let bytes_to_read = buf.len().min(CHUNK_SIZE - offset);
+        buf[..bytes_to_read].copy_from_slice(&chunk[offset..offset + bytes_to_read]);
+        self.pos += bytes_to_read;
         self.evict_distant_chunks();
         Ok(bytes_to_read)
     }
 }
 
 impl Seek for UrlSourceBuf {
-    fn seek(&mut self, pos: SeekFrom) -> std::result::Result<u64, std::io::Error> {
+    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
         match pos {
             SeekFrom::Start(p) => {
-                let chunk_key = self.get_chunk_key(p as usize);
-                if self.has_chunk(chunk_key) {
-                    self.pos = p as usize;
-                    Ok(u64::from_ne_bytes(self.pos.to_ne_bytes()))
-                } else {
-                    let mut chunk = [0u8; CHUNK_SIZE];
-                    let chunk_begin = chunk_key * CHUNK_SIZE;
-                    let res = ureq::get(&self.url)
-                        .set("Range", &format!("bytes={}-{}", chunk_begin, chunk_begin + CHUNK_SIZE))
-                        .call()
-                        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-                    self.reader = Box::new(res.into_reader());
-                    self.reader.read_exact(&mut chunk)?;
-                    self.insert_chunk(chunk_key, &chunk);
-                    self.pos = p as usize;
-                    Ok(u64::from_ne_bytes(self.pos.to_ne_bytes()))
-                }
+                self.pos = p as usize;
+                self.reposition_reader()?;
+                Ok(p)
             },
             SeekFrom::End(p) => {
                 let total_len = self.byte_len()
                     .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "no content-length available"))?;
-                let new_pos = total_len as i64 + p;
-                let chunk_key = self.get_chunk_key(new_pos as usize);
-
-                if self.has_chunk(chunk_key) {
-                    self.pos = new_pos as usize;
-                    Ok(u64::from_ne_bytes(self.pos.to_ne_bytes()))
-                } else {
-                    let mut chunk = [0u8; CHUNK_SIZE];
-                    let chunk_begin = chunk_key * CHUNK_SIZE;
-                    let res = ureq::get(&self.url)
-                        .set("Range", &format!("bytes=-{}", chunk_begin))
-                        .call()
-                        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-                    self.reader = Box::new(res.into_reader());
-
-                    self.reader.read_exact(&mut chunk)?;
-                    self.insert_chunk(chunk_key, &chunk);
-                    self.pos = new_pos as usize;
-                    Ok(u64::from_ne_bytes(self.pos.to_ne_bytes()))
-                }
+                let new_pos = (total_len as i64 + p).max(0) as usize;
+                self.pos = new_pos;
+                self.reposition_reader()?;
+                Ok(new_pos as u64)
             },
             SeekFrom::Current(p) => {
-                let new_pos: i64 = self.pos as i64 + p;
-                let chunk_key = self.get_chunk_key(new_pos as usize);
-                if self.has_chunk(chunk_key) {
-                    self.pos = p as usize;
-                    Ok(u64::from_ne_bytes(self.pos.to_ne_bytes()))
-                } else {
-                    let mut chunk = [0u8; CHUNK_SIZE];
-                    let chunk_begin = chunk_key * CHUNK_SIZE;
-                    let res = ureq::get(&self.url)
-                        .set("Range", &format!("bytes={}-{}", chunk_begin, chunk_begin + CHUNK_SIZE))
-                        .call()
-                        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-                    self.reader = Box::new(res.into_reader());
-                    self.reader.read_exact(&mut chunk)?;
-                    self.insert_chunk(chunk_key, &chunk);
-                    self.pos = p as usize;
-                    Ok(u64::from_ne_bytes(self.pos.to_ne_bytes()))
-                }
+                let new_pos = (self.pos as i64 + p).max(0) as usize;
+                self.pos = new_pos;
+                self.reposition_reader()?;
+                Ok(new_pos as u64)
             },
         }
     }
