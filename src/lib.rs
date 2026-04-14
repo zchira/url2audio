@@ -53,6 +53,7 @@ impl Player {
                 playing: Playing::Playing,
                 duration: 0.0,
                 position: 0.0,
+                pending_seek: None,
                 error: None,
                 chunks: Default::default(),
             })),
@@ -87,8 +88,10 @@ impl Player {
                             let _ = tx_events.send(a);
                         }
                         PlayerStatus::SendTimeStats(position, duration) => {
-                            state.position = position;
                             state.duration = duration;
+                            if state.pending_seek.is_none() {
+                                state.position = position;
+                            }
                         }
                         PlayerStatus::Error(ref err) => {
                             if state.position - state.duration >= -1.0 {
@@ -106,7 +109,12 @@ impl Player {
                         PlayerStatus::ChunkAdded(start, end) => {
                             state.chunks.push((start, end));
                         },
-                        PlayerStatus::Opened(_) | PlayerStatus::Closed | PlayerStatus::Seeked(_) => {
+                        PlayerStatus::Seeked(t) => {
+                            state.pending_seek = None;
+                            state.position = t;
+                            let _ = tx_events.send(PlayerStatus::Seeked(t));
+                        },
+                        PlayerStatus::Opened(_) | PlayerStatus::Closed => {
                             let _ = tx_events.send(a);
                         },
                     }
@@ -151,13 +159,15 @@ impl Player {
 
     /// seek to time relative from current position
     pub fn seek_relative(&self, dt: f64) {
-        let new_pos = self.current_position() + dt;
+        let new_pos = (self.current_position() + dt).max(0.0);
+        self.state.write().unwrap().pending_seek = Some(new_pos);
         let _ = self.tx.send(PlayerActions::Seek(new_pos));
     }
 
     /// Current playback position
     pub fn current_position(&self) -> f64 {
-        self.state.read().unwrap().position
+        let state = self.state.read().unwrap();
+        state.pending_seek.unwrap_or(state.position)
     }
 
     /// Duration in seconds
